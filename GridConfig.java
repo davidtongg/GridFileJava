@@ -21,7 +21,7 @@ public class GridConfig {
         return this.name;
     }
     public void setName(String name) {
-        if (name)
+        if (name != null || name != "")
             this.name = name;
     }
 }

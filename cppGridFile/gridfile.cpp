@@ -18,22 +18,22 @@ int gridfile::createFile(int64_t size, string fname, const char *mode)
 	int error = 0;
 	FILE *f = NULL;
 
-	f = fopen(fname.c_str(), mode);
-	if (f == NULL) {
+	f = fopen(fname.c_str(), mode); // opens file specified by fname, with given mode
+	if (f == NULL) { // if open fails, return error code
 		error = -errno;
 		goto clean;
 	}
 
-	error = fseek(f, size - 1, SEEK_SET);
-	if (error) {
+	error = fseek(f, size - 1, SEEK_SET); // seek end of file
+	if (error) { // if fails, close file
 		error = -errno;
 		goto pclean;
 	}
 
-	fputc('\0', f);
+	fputc('\0', f); // null terminate file, so that file is of size 'size'
 
-	error = fseek(f, 0, SEEK_SET);
-	if (error) {
+	error = fseek(f, 0, SEEK_SET); // seek beginning of file
+	if (error) { // if fails, close file, return error code
 		error = -errno;
 	}
 
@@ -63,10 +63,10 @@ int gridfile::createGrid(struct gridconfig *configuration)
 	int64_t psize = configuration->psize;
 	string name = configuration->name;
 
-	gridSize = size;
-	pageSize = psize;
-	scaleSize = (2 * gridSize + 1) * 8;
-	directorySize = (gridSize * gridSize) * 5 * 8 + 8;
+	gridSize = size; // set global variable gridSize = configuration->size
+	pageSize = psize; // set global variable pageSize = configuration->psize
+	scaleSize = (2 * gridSize + 1) * 8; // why ?
+	directorySize = (gridSize * gridSize) * 5 * 8 + 8; // why?
 	bucketSize = (gridSize * gridSize) * pageSize;
 	gridName = name;
 	scaleName = name + "scale";
@@ -75,20 +75,18 @@ int gridfile::createGrid(struct gridconfig *configuration)
 	gridScale = NULL;
 	gridDirectory = NULL;
 
-	error = createFile(scaleSize, scaleName, "w");
-	if (error < 0) {
+	error = createFile(scaleSize, scaleName, "w"); // create file for scale
+	if (error < 0) { // if fails, return error
 		goto clean;
 	}
 
-	sfd = open(scaleName.c_str(), O_RDWR);
-	if (sfd == -1) {
+	sfd = open(scaleName.c_str(), O_RDWR); // open above file for reading/writing
+	if (sfd == -1) { // if fails, return error
 		error = -errno;
 		goto clean;
 	}
 
-	saddr =
-	    (int64_t *) mmap(NULL, 8, PROT_READ | PROT_WRITE, MAP_SHARED, sfd,
-			     0);
+	saddr = (int64_t *) mmap(NULL, 8, PROT_READ | PROT_WRITE, MAP_SHARED, sfd, 0);
 	if (*saddr == -1) {
 		error = -errno;
 		close(sfd);

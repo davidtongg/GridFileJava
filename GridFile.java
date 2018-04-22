@@ -1,5 +1,5 @@
-import java.util.*
-import java.io.*
+import java.util.*;
+import java.io.*;
 
 public class GridFile {
     private long gridSize;
@@ -11,19 +11,13 @@ public class GridFile {
     private String scaleName;
     private String directoryName;
     private String bucketName;
-    private long gridScale;
-    private long gridDirectory;
+    private MappedByteBuffer gridScale;
+    private MappedByteBuffer gridDirectory;
 
-    /* Creates a file of given size and with given access mode
-
-    Parameters:
-    size: Required size of new file
-    fname: Name of new file as per convention
-    mode: Access mode of new file
-
-    Return:
-    Zero on success, error on failure */
-    public int createFile(long size, String fname, String mode) {
+    /*
+        Creates a file with write permission
+     */
+    public void createFile(long size, String fname) {
         File f = null;
 
         try {
@@ -33,313 +27,319 @@ public class GridFile {
             f.setReadable(false);
             f.setWritable(true);
         } catch (IOException e) {
-            e.printStackTrace();
-            return 1;
-        }
-
-        return 0;
-    }
-
-    /* Creates grid files and initializes grid parameters
-
-    Parameters:
-    configuration: Enlists grid size, page size, and grid name
-
-    Return:
-    Zero on success, error on failure */
-    public int createGrid(GridConfig configuration) {
-        long saddr;
-        long daddr;
-        long size = configuration.getSize();
-        long psize = configuration.getPSize();
-        String name = configuration.getName();
-
-        gridSize = size;
-        pageSize = psize;
-        scaleSize = (2 * gridSize + 1) * 8;
-        directorySize = (gridSize * gridSize) * 5 * 8 + 8;
-        bucketSize = (gridSize * gridSize) * pageSize;
-        gridName = name;
-        scaleName = name + "scale";
-        directoryName = name + "directory";
-        bucketName = name + "buckets";
-
-        createFile(scaleSize, scaleName, "w");
-    }
-
-    public int createGrid(gridconfig configuration) {
-        int error = 0;
-        int sfd = -1;
-        int dfd = -1;
-        long saddr = 0; // was pointer
-        long daddr = 0; // was pointer
-        long size = configuration.size;
-        long psize = configuration.psize;
-        String name = configuration.name;
-
-        gridSize = size;
-        pageSize = psize;
-        scaleSize = (2 * gridSize + 1) * 8;
-        directorySize = (gridSize * gridSize) * 5 * 8 + 8;
-        bucketSize = (gridSize * gridSize) * pageSize;
-        gridName = name;
-        scaleName = name + "scale";
-        directoryName = name + "directory";
-        bucketName = name + "buckets";
-        gridScale = null;
-        gridDirectory = null;
-
-        error = createFile(scaleSize, scaleName, "w");
-        if (error < 0) {
-            //goto clean;
-        }
-
-        sfd = open(scaleName.c_str(), O_RDWR);
-        if (sfd == -1) {
-            error = -errno;
-            //goto clean;
-        }
-
-        saddr = (long) mmap(null, 8, PROT_READ | PROT_WRITE, MAP_SHARED, sfd, 0);
-        if (saddr == -1) {
-            error = -errno;
-            close(sfd);
-            //goto clean;
-        }
-
-        saddr = size;
-        munmap(saddr, 8);
-        close(sfd);
-
-        error = createFile(directorySize, directoryName, "w");
-        if (error < 0) {
-            //goto clean;
-        }
-
-        dfd = open(directoryName.c_str(), O_RDWR);
-        if (dfd == -1) {
-            error = -errno;
-            //goto clean;
-        }
-
-        daddr = (long) mmap(null, 8, PROT_READ | PROT_WRITE, MAP_SHARED, dfd, 0);
-        if (daddr == -1) {
-            error = -errno;
-            close(dfd);
-            //goto clean;
-        }
-
-        daddr += 1;
-        munmap(daddr, 8);
-        close(dfd);
-
-        error = createFile(bucketSize, bucketName, "w");
-        if (error < 0) {
-            //goto clean;
+            //e.printStackTrace();
+            System.out.println("Error: createFile()");
         }
     }
 
-    public int mapGridScale() {
-        int error = 0;
-        int sfd = -1;
+    /*
+        Creates a grid with specified grid size, page size, and name
+     */
+    public void createGrid(long size, long psize, String name) {
+        MappedByteBuffer scaleRAF;
+        MappedByteBuffer dirRAF;
 
-        sfd = open(scaleName.c_str(), O_RDWR);
-        if (sfd == -1) {
-            error = -errno;
-            //goto clean;
+        this.gridSize = size;
+        this.pageSize = psize;
+        this.scaleSize = (2 * this.gridSize + 1) * 8;
+        this.directorySize = (this.gridSize * this.gridSize) * 5 * 8 + 8;
+        this.bucketSize = (this.gridSize * this.gridSize) * this.pageSize;
+        this.gridName = name;
+        this.scaleName = name + "scale";
+        this.directoryName = name + "directory";
+        this.bucketName = name + "buckets";
+        this.gridScale = null;
+        this.gridDirectory = null;
+
+        try {
+            // scale file
+            createFile(this.scaleSize, this.scaleName);
+            scaleRAF = new RandomAccessFile(this.scaleName, "rw")
+                    .getChannel().map(FileChannel.MapMode.READ_WRITE, 0, 8);
+            scaleRAF.write(size.getBytes());
+            scaleRAF.close();
+
+            // directory file
+            createFile(this.directorySize, this.directoryName);
+            dirRAF = new RandomAccessFile(this.directoryName, "rw")
+                    .getChannel().map(FileChannel.MapMode.READ_WRITE, 0, 8);
+            dirRAF.seek(1); // does this do what is done below?
+            dirRAF.close();
+
+            createFile(this.bucketSize, this.bucketName);
+        } catch (IOException e) {
+            //e.printStackTrace();
+            System.out.println("Error: createGrid()");
         }
+    }
 
-        gridScale = (long) mmap(null, scaleSize, PROT_READ | PROT_WRITE, MAP_SHARED, sfd, 0);
-        if (*gridScale == -1) {
-            error = -errno;
+    /*
+        Maps grid scale file into memory
+     */
+    public void mapGridScale() {
+        try {
+            this.gridScale = new RandomAccessFile(this.scaleName, "rw")
+                    .getChannel().map(FileChannel.MapMode.READ_WRITE, 0, this.scaleSize);
+        } catch (IOException e) {
+            //e.printStackTrace();
+            System.out.println("Error: mapGridScale()")
         }
-
-        close(sfd);
     }
 
     public void unmapGridScale() {
-        munmap(gridScale, scaleSize);
-        gridScale = null;
+        try {
+            this.gridScale.close();
+            this.gridScale = null;
+        } catch(IOException e) {
+            //e.printStackTrace();
+            System.out.println("Error: unmapGridScale()")
+        }
     }
 
-    public int mapGridDirectory() {
-        int error = 0;
-        int dfd = -1;
-
-        dfd = open(directoryName.c_str(), O_RDWR);
-        if (dfd == -1) {
-            error = -errno;
-            //goto clean;
+    /*
+        Maps grid directory file into memory
+     */
+    public void mapGridDirectory() {
+        try {
+            this.gridDirectory = new RandomAccessFile(this.directoryName, "rw")
+                    .getChannel().map(FileChannel.MapMode.READ_WRITE, 0, this.directorySize);
+        } catch (IOException e) {
+            //e.printStackTrace();
+            System.out.println("Error: mapGridDirectory()");
         }
-
-        gridDirectory = (long) mmap(null, directorySize, PROT_READ | PROT_WRITE, MAP_SHARED, dfd, 0);
-        if (*gridDirectory == -1) {
-            error = -errno;
-        }
-
-        close(dfd);
     }
 
     public void unmapGridDirectory() {
-        munmap(gridDirectory, directorySize);
-        gridDirectory = null;
-    }
-
-    public int loadGrid() {
-        int error = 0;
-
-        error = mapGridScale();
-        if (error < 0) {
-            //goto clean;
-        }
-
-        error = mapGridDirectory();
-        if (error < 0) {
-            unmapGridScale();
+        try {
+            this.gridDirectory.close();
+            this.gridDirectory = null;
+        } catch(IOException e) {
+            //e.printStackTrace();
+            System.out.println("Error: unmapGridDirectory()");
         }
     }
 
+    /*
+        Maps grid scale file and grid directory file into memory
+     */
+    public void loadGrid() {
+        mapGridScale();
+        mapGridDirectory();
+    }
+
+    /*
+        Unmaps grid scale file and grid directory file from memory
+     */
     public void unloadGrid() {
         unmapGridScale();
         unmapGridDirectory();
     }
 
-    public void getGridLocation(tangible.RefObject<Long> lon, tangible.RefObject<Long> lat, long x, long y) {
-        long xint = gridScale[1];
-        long yint = gridScale[1 + gridSize];
-        long[] xpart = gridScale + 1 + 1;
-        long ypart = gridScale + 1 + gridSize + 1; // was pointer
-        long iter = 0;
+    /*
+        Fetches grid longitude and latitude for given coordinates from grid scale
+     */
+    public long[] getGridLocation(long x, long y) {
+        try {
+            this.gridScale.seek(1);
+            long xint = this.gridScale.readLong(); // read at position 1
+            this.gridScale.seek(1 + gridSize);
+            long yint = this.gridScale.readLong(); // read at position 1 + gridSize
 
-        lon.argValue = null;
-        while (iter < xint && x > xpart[iter]) {
-            lon.argValue = ++iter;
+            long xpart = 2;
+            long ypart = 2 + this.gridSize;
+            long iter = 0;
+            long[] lonlat = new long[2];
+
+            this.gridScale.seek(xpart);
+            while (iter < xint && x > this.gridScale.readLong()) { // determine longitude
+                lonlat[0] = ++iter;
+            }
+
+            iter = 0;
+            this.gridScale.seek(ypart);
+            while (iter < yint && y > this.gridScale.readLong()) { // determine latitude
+                lonlat[1] = ++iter;
+            }
+        } catch(IOException e) {
+            //e.printStackTrace();
+            System.out.println("Error: getGridLocation()");
         }
 
-        iter = 0;
-        lat.argValue = null;
-        while (iter < yint && y > ypart[iter]) {
-            lat.argValue = ++iter;
-        }
+        return lonlat; // return "tuple", (longitude, latitude)
     }
 
-    public int insertGridPartition(int lon, long partition) {
-        int error = 0;
+    /*
+        Inserts new grid partition in grid scale
+     */
+    public void insertGridPartition(int lon, long partition) {
         long ints = 0;
-        long inta = 0; // was pointer
-        long part = 0; // was pointer
+        long inta = 0; // used as offset
+        long part = 0; // used as offset
         long iter = 0;
         long ipart = 0;
 
-        if (lon != 0) {
-            ints = gridScale[1];
-            inta = gridScale + 1;
-            part = gridScale + 1 + 1;
-        } else {
-            ints = gridScale[1 + gridSize];
-            inta = gridScale + 1 + gridSize;
-            part = gridScale + 1 + gridSize + 1;
+        try {
+            if (lon == 1) { // longitude
+                this.gridScale.seek(1);
+                ints = this.gridScale.readLong(); // read at position 1
+                inta = 1;
+                part = 2;
+            } else { // latitude
+                this.gridScale.seek(1 + this.gridSize);
+                ints = this.gridScale.readLong();
+                inta = 1 + this.gridSize;
+                part = 2 + this.gridSize;
+            }
+
+            if (ints >= this.gridSize - 1) {
+                throw new OutOfMemoryError("Out of memory in insertGridPartition()");
+            }
+
+            this.gridScale.seek(part);
+            while (iter < ints && partition > this.gridScale.readLong()) {
+                iter++;
+            }
+
+            this.gridScale.seek(part + iter);
+            if (iter < ints && this.gridScale.readLong() == partition) {
+                throw new OutOfMemoryError("Out of memory in insertGridPartition()");
+            }
+
+            ipart = iter;
+
+            this.gridScale.seek(part + ints);
+            for (iter = ints; iter > ipart; iter--) {
+                // original: part[iter] = part[iter - 1]
+                this.gridScale.seek(part + iter - 1);
+                long temp = this.gridScale.readLong(); // part[iter - 1]
+
+                this.gridScale.seek(part + iter);
+                this.gridScale.writeLong(temp); // part[iter]
+            }
+
+            this.gridScale.seek(part + ipart);
+            this.girdScale.writeLong(partition);
+
+            this.gridScale.seek(inta);
+            long temp = this.gridScale.readLong() + 1;
+            this.gridScale.seek(inta);
+            this.gridScale.writeLong(temp);
+        } catch(IOException e) {
+            //e.printStackTrace();
+            System.out.println("Error: insertGridPartition()");
         }
-
-        if (ints >= gridSize - 1) {
-            error = -ENOMEM;
-            //goto clean;
-        }
-
-        while (iter < ints && partition > part[iter]) {
-            iter++;
-        }
-
-        if (iter < ints && part[iter] == partition) {
-            error = -ENOMEM;
-            //goto clean;
-        }
-
-        ipart = iter;
-
-        for (iter = ints; iter > ipart; iter--) {
-            part[iter] = part[iter - 1];
-        }
-
-        part[ipart] = partition;
-        inta += 1;
     }
 
-    public int getGridPartitions(tangible.RefObject<Long> x, tangible.RefObject<Long> y, long lon, long lat) {
-        int error = 0;
-        long xint = gridScale[1];
-        long yint = gridScale[1 + gridSize];
+    /*
+        Fetches grid partitions for given coordinates
+     */
+    public long[] getGridPartitions(long lon, long lat) {
+        try {
+            this.gridScale.seek(1);
+            long xint = this.gridScale.readLong();
+            this.gridScale.seek(1 + gridSize);
+            long yint = this.gridScale.readLong();
+        } catch(IOException e) {
+            //e.printStackTrace();
+            System.out.println("Error: getGridPartitions()");
+        }
         long xp = 0;
         long yp = 0;
+        long xy[] = new long[2];
 
         if (lon > xint || lat > yint) {
-            error = -EINVAL;
-            //goto clean;
+            throw new IllegalArgumentException("Invalid argument in getGridPartitions()");
         }
 
-        xp = lon - 1 < 0 ? 0 : lon - 1;
-        yp = lat - 1 < 0 ? 0 : lat - 1;
+        xp = (lon - 1 < 0) ? 0 : lon - 1;
+        yp = (lat - 1 < 0) ? 0 : lat - 1;
 
-        x.argValue = gridScale[2 + xp];
-        y.argValue = gridScale[2 + gridSize + yp];
+        xy[0] = gridScale[2 + xp];
+        xy[1] = gridScale[2 + this.gridSize + yp];
+
+        return xy;
     }
 
-    public int getGridEntry(long lon, long lat, long[][] gentry) {
-        int error = 0;
+    /*
+        Returns offset for beginning of grid entry in grid directory
+     */
+    public long getGridEntry(long lon, long lat) {
         long offset = 1;
-        long xint = gridScale[1];
-        long yint = gridScale[1 + gridSize];
+        try {
+            this.gridScale.seek(1);
+            long xint = this.gridScale.readLong();
+            this.gridScale.seek(1 + this.gridSize);
+            long yint = this.gridScale.readLong();
+        } catch(IOException e) {
+            //e.printStackTrace();
+            System.out.println("Error: getGridEntry()");
+        }
 
         if (lon > xint || lat > yint) {
-            error = -EINVAL;
-            //goto clean;
+            throw new IllegalArgumentException("Invalid argument in getGridEntry()");
         }
 
-        offset += (lon * gridSize * 5 + lat * 5);
+        offset += (lon * this.gridSize * 5 + lat * 5);
 
-        gentry = gridDirectory + offset;
+        return offset; // use gridScale.seek(offset) in calling method to determine location of gentry
     }
 
-    public int mapGridBucket(long[] gentry, long[][] gbucket) {
-        int error = 0;
-        int bfd = -1;
-        long baddr = gentry[4];
-        long boffset = baddr * pageSize;
+    /*
+        Maps grid bucket into memory for given grid entry
+     */
+    public MappedByteBuffer mapGridBucket(long gentry) {
+        try {
+            this.gridScale.seek(gentry + 4);
+            long baddr = this.gridScale.readLong();
+            long boffset = baddr * this.pageSize;
 
-        bfd = open(bucketName.c_str(), O_RDWR);
-        if (bfd == -1) {
-            error = -errno;
-            //goto clean;
+            gbucket = new RandomAccessFile(bucketName, "rw").getChannel().map(FileChannel.MapMode.READ_WRITE, boffset, this.pageSize);
+        } catch (IOException e) {
+            e.printStackTrace();
         }
 
-        gbucket = (long) mmap(null, pageSize, PROT_READ | PROT_WRITE, MAP_SHARED, bfd, boffset);
-
-        if (* gbucket == -1) {
-            error = -errno;
-        }
-
-        close(bfd);
+        return gbucket;
     }
 
-    public void unmapGridBucket(tangible.RefObject<Long> gbucket) {
-        munmap(gbucket.argValue, pageSize);
-        gbucket.argValue = null;
+    /*
+        Unmaps grid bucket from memory
+     */
+    public void unmapGridBucket(MappedByteBuffer gbucket) {
+        gbucket.close();
+        gbucket = null;
     }
 
-    public void appendBucketEntry(long[] gbucket, long x, long y, long rsize, Object record) {
-        long nbytes = gbucket[0];
+    /*
+        Appends x, y, record size and record at end of the bucket
+     */
+    public void appendBucketEntry(MappedByteBuffer gbucket, long x, long y, long rsize, Object record) {
+        gbucket.seek(0);
+        long nbytes = gbucket.readLong();
         long boffset = 16 + nbytes;
-        long[] bentry = (long)((String)gbucket + boffset);
+        gbucket.seek(boffset);
 
-        bentry[0] = x;
-        bentry[1] = y;
-        bentry[2] = rsize;
+        gbucket.writeLong(x);
+        gbucket.writeLong(y);
+        gbucket.writeLong(rsize);
+
         //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'memcpy' has no equivalent in Java:
-        memcpy(bentry + 3, record, rsize);
+        long pointer = gbucket.getFilePointer();
+        gbucket.seek(pointer + 3);
+        gbucket.write(record.getBytes());
 
-        gbucket[0] += (24 + rsize);
-        gbucket[1] += 1;
+
+        gbucket.seek(0);
+        long temp = gbucket.readLong();
+        gbucket.seek(0);
+        gbucket.writeLong(temp + 24 + rsize);
+
+        gbucket.seek(1);
+        temp = gbucket.readLong();
+        gbucket.seek(0);
+        gbucket.writeLong(temp + 1);
     }
+
+    /*STOP =====================================================================================================================*/
 
     public int getBucketEntry(long[][] bentry, long[] gbucket, long entry) {
         int error = 0;
@@ -411,7 +411,7 @@ public class GridFile {
         long sx = gentry[2];
         long sy = gentry[3];
         long esize = 24 + rsize;
-        long capacity = pageSize - 16 - nbytes;
+        long capacity = this.pageSize - 16 - nbytes;
         long gbucket = 0; // was pointer
 
         if (esize > capacity) {
@@ -616,7 +616,7 @@ public class GridFile {
             //goto clean;
         }
 
-        error == getGridEntry(dlon, dlat, dge);
+        error = getGridEntry(dlon, dlat, dge);
         if (error < 0) {
             //goto clean;
         }
@@ -675,8 +675,7 @@ public class GridFile {
 
                     error = deleteBucketEntry(sb, iter);
                     if (error < 0) {
-                        //C++ TO JAVA CONVERTER TODO TASK: There are no gotos or labels in Java:
-                        goto pclean;
+                        //goto pclean;
                     }
                 } else {
                     iter++;
@@ -686,8 +685,7 @@ public class GridFile {
             while (iter < sn) {
                 error = getBucketEntry(cbe, sb, iter);
                 if (error < 0) {
-                    //C++ TO JAVA CONVERTER TODO TASK: There are no gotos or labels in Java:
-                    goto pclean;
+                    //goto pclean;
                 }
 
                 if (cbe[1] > avgy) {
@@ -705,7 +703,7 @@ public class GridFile {
                     error = deleteBucketEntry(sb, iter);
                     if (error < 0) {
                         //C++ TO JAVA CONVERTER TODO TASK: There are no gotos or labels in Java:
-                        goto pclean;
+                        //goto pclean;
                     }
                 } else {
                     iter++;
@@ -726,7 +724,7 @@ public class GridFile {
         error = updatePairedBuckets(1, dlon, dlat, sge[4]);
         if (error < 0) {
             //C++ TO JAVA CONVERTER TODO TASK: There are no gotos or labels in Java:
-            goto pclean;
+            //goto pclean;
         }
 
         error = updatePairedBuckets(0, slon, slat, sge[4]);
@@ -842,7 +840,7 @@ public class GridFile {
 
         nbytes = ge[0];
         nrecords = ge[1];
-        capacity = pageSize - 16 - nbytes;
+        capacity = this.pageSize - 16 - nbytes;
 
         if (esize <= capacity) {
             error = insertGridRecord(ge, x, y, record, rsize);
@@ -904,7 +902,7 @@ public class GridFile {
         long rsize = 0;
 
         //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'malloc' has no equivalent in Java:
-        record[0] = (Object)malloc(pageSize);
+        record[0] = (Object)malloc(this.pageSize);
         if (record[0] == null) {
             error = -ENOMEM;
             //goto clean;
@@ -1023,7 +1021,7 @@ public class GridFile {
         */
     }
 
-    public int findRangeRecords(long x1, long y1, long x2, long y2, long * dsize, Object[] records) {
+    public int findRangeRecords(long x1, long y1, long x2, long y2, long dsize/*waspointer*/, Object[] records) {
         int error = 0;
         long lon1 = 0;
         long lat1 = 0;
@@ -1049,7 +1047,7 @@ public class GridFile {
         getGridLocation(lon1, lat1, x1, y1);
         getGridLocation(lon2, lat2, x2, y2);
 
-        rsize = (lon2 - lon1 + 1) * (lat2 - lat1 + 1) * pageSize;
+        rsize = (lon2 - lon1 + 1) * (lat2 - lat1 + 1) * this.pageSize;
         //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'malloc' has no equivalent in Java:
         records[0] = (Object)malloc(rsize);
         if (records[0] == null) {
@@ -1098,7 +1096,7 @@ public class GridFile {
                         //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'memcpy' has no equivalent in Java:
                         memcpy(rrecords, be, 24 + bs);
                         rrecords += (24 + bs);
-                        *dsize += (24 + bs);
+                        dsize += (24 + bs); // was pointer
                     }
                 }
 
