@@ -1,5 +1,8 @@
 import java.util.*;
-import java.io.*;
+import java.io.File;
+import java.io.RandomAccessFile;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 
 public class GridFile {
     private long gridSize;
@@ -13,20 +16,19 @@ public class GridFile {
     private String bucketName;
     private MappedByteBuffer gridScale;
     private MappedByteBuffer gridDirectory;
+    private final long LONGBYTES = Long.SIZE / 8;
 
     /*
         Creates a file with write permission
      */
     public void createFile(long size, String fname) {
-        File f = null;
-
         try {
-            f = new File(fname);
+            File f = new File(fname);
             f.createNewFile();
             f.setExecutable(false);
             f.setReadable(false);
             f.setWritable(true);
-        } catch (IOException e) {
+        } catch (Exception e) {
             //e.printStackTrace();
             System.out.println("Error: createFile()");
         }
@@ -36,8 +38,8 @@ public class GridFile {
         Creates a grid with specified grid size, page size, and name
      */
     public void createGrid(long size, long psize, String name) {
-        MappedByteBuffer scaleRAF;
-        MappedByteBuffer dirRAF;
+        MappedByteBuffer scaleMBB;
+        MappedByteBuffer dirMBB;
 
         this.gridSize = size;
         this.pageSize = psize;
@@ -54,20 +56,20 @@ public class GridFile {
         try {
             // scale file
             createFile(this.scaleSize, this.scaleName);
-            scaleRAF = new RandomAccessFile(this.scaleName, "rw")
+            scaleMBB = new RandomAccessFile(this.scaleName, "rw")
                     .getChannel().map(FileChannel.MapMode.READ_WRITE, 0, 8);
-            scaleRAF.write(size.getBytes());
-            scaleRAF.close();
+            scaleMBB.putLong(0, size);
+            //scaleRAF.close();
 
             // directory file
             createFile(this.directorySize, this.directoryName);
-            dirRAF = new RandomAccessFile(this.directoryName, "rw")
+            dirMBB = new RandomAccessFile(this.directoryName, "rw")
                     .getChannel().map(FileChannel.MapMode.READ_WRITE, 0, 8);
-            dirRAF.seek(1); // does this do what is done below?
-            dirRAF.close();
+            dirMBB.position(1 * LONGBYTES); // does this do what is done below?
+            //dirRAF.close();
 
             createFile(this.bucketSize, this.bucketName);
-        } catch (IOException e) {
+        } catch (Exception e) {
             //e.printStackTrace();
             System.out.println("Error: createGrid()");
         }
@@ -80,19 +82,19 @@ public class GridFile {
         try {
             this.gridScale = new RandomAccessFile(this.scaleName, "rw")
                     .getChannel().map(FileChannel.MapMode.READ_WRITE, 0, this.scaleSize);
-        } catch (IOException e) {
+        } catch (Exception e) {
             //e.printStackTrace();
-            System.out.println("Error: mapGridScale()")
+            System.out.println("Error: mapGridScale()");
         }
     }
 
     public void unmapGridScale() {
         try {
-            this.gridScale.close();
+            //this.gridScale.close();
             this.gridScale = null;
-        } catch(IOException e) {
+        } catch (Exception e) {
             //e.printStackTrace();
-            System.out.println("Error: unmapGridScale()")
+            System.out.println("Error: unmapGridScale()");
         }
     }
 
@@ -103,7 +105,7 @@ public class GridFile {
         try {
             this.gridDirectory = new RandomAccessFile(this.directoryName, "rw")
                     .getChannel().map(FileChannel.MapMode.READ_WRITE, 0, this.directorySize);
-        } catch (IOException e) {
+        } catch (Exception e) {
             //e.printStackTrace();
             System.out.println("Error: mapGridDirectory()");
         }
@@ -111,9 +113,9 @@ public class GridFile {
 
     public void unmapGridDirectory() {
         try {
-            this.gridDirectory.close();
+            //this.gridDirectory.close();
             this.gridDirectory = null;
-        } catch(IOException e) {
+        } catch (Exception e) {
             //e.printStackTrace();
             System.out.println("Error: unmapGridDirectory()");
         }
@@ -139,28 +141,24 @@ public class GridFile {
         Fetches grid longitude and latitude for given coordinates from grid scale
      */
     public long[] getGridLocation(long x, long y) {
+        long[] lonlat = new long[2];
         try {
-            this.gridScale.seek(1);
-            long xint = this.gridScale.readLong(); // read at position 1
-            this.gridScale.seek(1 + gridSize);
-            long yint = this.gridScale.readLong(); // read at position 1 + gridSize
+            long xint = this.gridScale.getLong(1 * LONGBYTES); // read at position 1
+            long yint = this.gridScale.getLong((1 + this.gridSize) * LONGBYTES); // read at position 1 + gridSize
 
             long xpart = 2;
             long ypart = 2 + this.gridSize;
             long iter = 0;
-            long[] lonlat = new long[2];
 
-            this.gridScale.seek(xpart);
-            while (iter < xint && x > this.gridScale.readLong()) { // determine longitude
+            while (iter < xint && x > this.gridScale.getLong((xpart + iter) * LONGBYTES)) { // determine longitude
                 lonlat[0] = ++iter;
             }
 
             iter = 0;
-            this.gridScale.seek(ypart);
-            while (iter < yint && y > this.gridScale.readLong()) { // determine latitude
+            while (iter < yint && y > this.gridScale.getLong((ypart + iter) * LONGBYTES)) { // determine latitude
                 lonlat[1] = ++iter;
             }
-        } catch(IOException e) {
+        } catch (Exception e) {
             //e.printStackTrace();
             System.out.println("Error: getGridLocation()");
         }
@@ -172,21 +170,19 @@ public class GridFile {
         Inserts new grid partition in grid scale
      */
     public void insertGridPartition(int lon, long partition) {
-        long ints = 0;
-        long inta = 0; // used as offset
-        long part = 0; // used as offset
+        long ints;
+        long inta; // used as offset
+        long part; // used as offset
         long iter = 0;
-        long ipart = 0;
+        long ipart;
 
         try {
             if (lon == 1) { // longitude
-                this.gridScale.seek(1);
-                ints = this.gridScale.readLong(); // read at position 1
+                ints = this.gridScale.getLong(1 * LONGBYTES); // read at position 1
                 inta = 1;
                 part = 2;
             } else { // latitude
-                this.gridScale.seek(1 + this.gridSize);
-                ints = this.gridScale.readLong();
+                ints = this.gridScale.getLong((1 + this.gridSize) * LONGBYTES);
                 inta = 1 + this.gridSize;
                 part = 2 + this.gridSize;
             }
@@ -195,36 +191,26 @@ public class GridFile {
                 throw new OutOfMemoryError("Out of memory in insertGridPartition()");
             }
 
-            this.gridScale.seek(part);
-            while (iter < ints && partition > this.gridScale.readLong()) {
+            while (iter < ints && partition > this.gridScale.getLong((part + iter) * LONGBYTES)) {
                 iter++;
             }
 
-            this.gridScale.seek(part + iter);
-            if (iter < ints && this.gridScale.readLong() == partition) {
+            if (iter < ints && this.gridScale.getLong((part + iter) * LONGBYTES) == partition) {
                 throw new OutOfMemoryError("Out of memory in insertGridPartition()");
             }
 
             ipart = iter;
 
-            this.gridScale.seek(part + ints);
             for (iter = ints; iter > ipart; iter--) {
-                // original: part[iter] = part[iter - 1]
-                this.gridScale.seek(part + iter - 1);
-                long temp = this.gridScale.readLong(); // part[iter - 1]
-
-                this.gridScale.seek(part + iter);
-                this.gridScale.writeLong(temp); // part[iter]
+                long prev = this.gridScale.getLong((part + iter - 1) * LONGBYTES);
+                this.gridScale.putLong((part + iter) * LONGBYTES, prev);
             }
 
-            this.gridScale.seek(part + ipart);
-            this.girdScale.writeLong(partition);
+            this.gridScale.putLong((part + ipart) * LONGBYTES, partition);
 
-            this.gridScale.seek(inta);
-            long temp = this.gridScale.readLong() + 1;
-            this.gridScale.seek(inta);
-            this.gridScale.writeLong(temp);
-        } catch(IOException e) {
+            long temp = this.gridScale.getLong(inta * LONGBYTES);
+            this.gridScale.putLong(inta * LONGBYTES, temp + 1);
+        } catch (Exception e) {
             //e.printStackTrace();
             System.out.println("Error: insertGridPartition()");
         }
@@ -234,28 +220,26 @@ public class GridFile {
         Fetches grid partitions for given coordinates
      */
     public long[] getGridPartitions(long lon, long lat) {
+        long xy[] = new long[2];
         try {
-            this.gridScale.seek(1);
-            long xint = this.gridScale.readLong();
-            this.gridScale.seek(1 + gridSize);
-            long yint = this.gridScale.readLong();
-        } catch(IOException e) {
+            long xint = this.gridScale.getLong(1 * LONGBYTES);
+            long yint = this.gridScale.getLong((1 + this.gridSize) * LONGBYTES);
+            long xp;
+            long yp;
+
+            if (lon > xint || lat > yint) {
+                throw new IllegalArgumentException("Invalid argument in getGridPartitions()");
+            }
+
+            xp = (lon - 1 < 0) ? 0 : lon - 1;
+            yp = (lat - 1 < 0) ? 0 : lat - 1;
+
+            xy[0] = this.gridScale.getLong((2 + xp) * LONGBYTES);
+            xy[1] = this.gridScale.getLong((2 + this.gridSize + yp) * LONGBYTES);
+        } catch (Exception e) {
             //e.printStackTrace();
             System.out.println("Error: getGridPartitions()");
         }
-        long xp = 0;
-        long yp = 0;
-        long xy[] = new long[2];
-
-        if (lon > xint || lat > yint) {
-            throw new IllegalArgumentException("Invalid argument in getGridPartitions()");
-        }
-
-        xp = (lon - 1 < 0) ? 0 : lon - 1;
-        yp = (lat - 1 < 0) ? 0 : lat - 1;
-
-        xy[0] = gridScale[2 + xp];
-        xy[1] = gridScale[2 + this.gridSize + yp];
 
         return xy;
     }
@@ -265,12 +249,12 @@ public class GridFile {
      */
     public long getGridEntry(long lon, long lat) {
         long offset = 1;
+        long xint;
+        long yint;
         try {
-            this.gridScale.seek(1);
-            long xint = this.gridScale.readLong();
-            this.gridScale.seek(1 + this.gridSize);
-            long yint = this.gridScale.readLong();
-        } catch(IOException e) {
+            xint = this.gridScale.getLong(1 * LONGBYTES);
+            yint = this.gridScale.getLong((1 + this.gridSize) * LONGBYTES);
+        } catch (Exception e) {
             //e.printStackTrace();
             System.out.println("Error: getGridEntry()");
         }
@@ -281,21 +265,23 @@ public class GridFile {
 
         offset += (lon * this.gridSize * 5 + lat * 5);
 
-        return offset; // use gridScale.seek(offset) in calling method to determine location of gentry
+        return offset;  // use gridScale.getLong(offset * LONGBYTES)
     }
 
     /*
         Maps grid bucket into memory for given grid entry
      */
     public MappedByteBuffer mapGridBucket(long gentry) {
+        MappedByteBuffer gbucket;
         try {
-            this.gridScale.seek(gentry + 4);
-            long baddr = this.gridScale.readLong();
+            long baddr = this.gridScale.getLong((gentry + 4) * LONGBYTES);
             long boffset = baddr * this.pageSize;
 
-            gbucket = new RandomAccessFile(bucketName, "rw").getChannel().map(FileChannel.MapMode.READ_WRITE, boffset, this.pageSize);
-        } catch (IOException e) {
-            e.printStackTrace();
+            gbucket = new RandomAccessFile(bucketName, "rw").getChannel().map(FileChannel.MapMode.READ_WRITE, boffset * LONGBYTES, this.pageSize);
+        } catch (Exception e) {
+            //e.printStackTrace();
+            unmapGridBucket(gbucket);
+            System.out.println("Error: mapGridBucket()");
         }
 
         return gbucket;
@@ -305,805 +291,752 @@ public class GridFile {
         Unmaps grid bucket from memory
      */
     public void unmapGridBucket(MappedByteBuffer gbucket) {
-        gbucket.close();
-        gbucket = null;
+        try {
+            //gbucket.close();
+            gbucket = null;
+        } catch (Exception e) {
+            //e.printStackTrace();
+            System.out.println("Error: unmapGridBucket()");
+        }
     }
 
     /*
         Appends x, y, record size and record at end of the bucket
      */
     public void appendBucketEntry(MappedByteBuffer gbucket, long x, long y, long rsize, Object record) {
-        gbucket.seek(0);
-        long nbytes = gbucket.readLong();
-        long boffset = 16 + nbytes;
-        gbucket.seek(boffset);
+        try {
+            long nbytes = gbucket.getLong(0);
+            long boffset = 16 + nbytes;
 
-        gbucket.writeLong(x);
-        gbucket.writeLong(y);
-        gbucket.writeLong(rsize);
+            gbucket.putLong(boffset * LONGBYTES, x);
+            gbucket.putLong((boffset + 1) * LONGBYTES, y);
+            gbucket.putLong((boffset + 2) * LONGBYTES, rsize);
+            gbucket.position((boffset + 3) * LONGBYTES);
+            gbucket.put(record, 0, rsize); // memcpy
 
-        //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'memcpy' has no equivalent in Java:
-        long pointer = gbucket.getFilePointer();
-        gbucket.seek(pointer + 3);
-        gbucket.write(record.getBytes());
-
-
-        gbucket.seek(0);
-        long temp = gbucket.readLong();
-        gbucket.seek(0);
-        gbucket.writeLong(temp + 24 + rsize);
-
-        gbucket.seek(1);
-        temp = gbucket.readLong();
-        gbucket.seek(0);
-        gbucket.writeLong(temp + 1);
+            long temp = gbucket.getLong(0);
+            gbucket.putLong(0, temp + 24 + rsize);
+            temp = gbucket.getLong(1 * LONGBYTES);
+            gbucket.putLong(1 * LONGBYTES, temp + 1);
+        } catch (Exception e) {
+            //e.printStackTrace();
+            System.out.println("Error: appendBucketEntry()");
+        }
     }
 
-    /*STOP =====================================================================================================================*/
+    /*
+        Returns bucket entry offset from mapped grid bucket
+     */
+    public long getBucketEntry(MappedByteBuffer gbucket, long entry) {
+        long be = 16 * LONGBYTES;
+        try {
+            long nrecords = gbucket.getLong(1 * LONGBYTES);
+            //long cbe;
+            long rsize;
+            long iter;
 
-    public int getBucketEntry(long[][] bentry, long[] gbucket, long entry) {
-        int error = 0;
-        long nrecords = gbucket[1];
-        String be = (String)gbucket + 16;
-        long cbe = 0; // was pointer
-        long rsize = 0;
-        long iter = 0;
-
-        if (entry >= nrecords) {
-            error = -EINVAL;
-            //goto clean;
-        }
-
-        for (iter = 0; iter < entry; iter++) {
-            cbe = (long) be;
-            rsize = cbe[2];
-            be += (24 + rsize);
-        }
-
-        bentry = (long) be;
-    }
-
-    public int deleteBucketEntry(long[] gbucket, long entry) {
-        int error = 0;
-        long nbytes = gbucket[0];
-        long nrecords = gbucket[1];
-        long cbytes = nbytes;
-        long cbe = 0; // was pointer
-        long nbe = 0; // was pointer
-        long rsize = 0;
-        long iter = 0;
-
-        if (entry >= nrecords) {
-            error = -EINVAL;
-            //goto clean;
-        }
-
-        for (iter = 0; iter < entry; iter++) {
-            error = getBucketEntry(cbe, gbucket, iter);
-            if (error < 0)
-            {
-                //goto clean;
+            if (entry >= nrecords) {
+                throw new IllegalArgumentException("Invalid argument in getBucketEntry()");
             }
 
-            cbytes -= (24 + cbe[2]);
+            for (iter = 0; iter < entry; iter++) {
+                rsize = gbucket.getLong((be + 2) * LONGBYTES);
+                be += 24 + rsize;
+            }
+        } catch (Exception e) {
+            //e.printStackTrace();
+            System.out.println("Error: getBucketEntry()");
         }
 
-        error = getBucketEntry(cbe, gbucket, entry);
-        if (error < 0) {
-            //goto clean;
-        }
-
-        rsize = cbe[2];
-        cbytes -= (24 + rsize);
-        nbe = (long)((String)cbe + 24 + rsize);
-
-        //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'memmove' has no equivalent in Java:
-        memmove(cbe, nbe, cbytes);
-
-        gbucket[0] -= (24 + rsize);
-        gbucket[1] -= 1;
+        return be; // return offset of bucket entry
     }
 
-    public int insertGridRecord(long[] gentry, long x, long y, Object record, long rsize) {
-        int error = 0;
-        long nbytes = gentry[0];
-        long nrecords = gentry[1];
-        long sx = gentry[2];
-        long sy = gentry[3];
-        long esize = 24 + rsize;
-        long capacity = this.pageSize - 16 - nbytes;
-        long gbucket = 0; // was pointer
+    /*
+        Deletes bucket entry from mapped grid bucket
+     */
+    public void deleteBucketEntry(MappedByteBuffer gbucket, long entry) {
+        try {
+            long nbytes = gbucket.getLong(0);
+            long nrecords = gbucket.getLong(1 * LONGBYTES);
+            long cbytes = nbytes;
+            long cbe; // used as offset
+            long nbe; // used as offset
+            long rsize;
+            long iter;
 
-        if (esize > capacity) {
-            error = -ENOMEM;
-            //goto clean;
+            if (entry >= nrecords) {
+                throw new IllegalArgumentException("Invalid argument in deleteBucketEntry()");
+            }
+
+            for (iter = 0; iter < entry; iter++) {
+                cbe = getBucketEntry(gbucket, iter);
+                cbytes -= (24 + gbucket.getLong(cbe * LONGBYTES));
+            }
+
+            cbe = getBucketEntry(gbucket, entry);
+
+            rsize = gbucket.getLong((2 + cbe) * LONGBYTES);
+            cbytes -= (24 + rsize);
+            nbe = cbe + 24 + rsize;
+
+            // memmove(cbe, nbe, cbytes);
+            byte[] record = new byte[cbytes];
+            gbucket.position(nbe * LONGBYTES);
+            gbucket.get(record, 0, cbytes);
+            gbucket.position(cbe * LONGBYTES);
+            gbucket.put(record, 0, cbytes);
+
+            long temp = gbucket.getLong(0);
+            gbucket.putLong(0, temp - (24 + rsize));
+            temp = gbucket.getLong(1 * LONGBYTES);
+            gbucket.putLong(1 * LONGBYTES, temp - 1);
+        } catch (Exception e) {
+            //e.printStackTrace();
+            System.out.println("Error: deleteBucketEntry()");
         }
+    }
 
-        error = mapGridBucket(gentry, gbucket);
-        if (error < 0) {
-            //goto clean;
+    /*
+        Inserts new record into bucket, updating bucket and grid entry statistics
+     */
+    public void insertGridRecord(long gentry, long x, long y, Object record, long rsize) {
+        MappedByteBuffer gbucket;
+        try {
+            long nbytes = this.gridDirectory.getLong(0);
+            long nrecords = this.gridDirectory.getLong((1 + gentry) * LONGBYTES);
+            long sx = this.gridDirectory.getLong((2 + gentry) * LONGBYTES);
+            long sy = this.gridDirectory.getLong((3 + gentry) * LONGBYTES);
+            long esize = 24 + rsize;
+            long capacity = this.pageSize - 16 - nbytes;
+
+            if (esize > capacity) {
+                throw new OutOfMemoryError("Out of memory in insertGridRecord()");
+            }
+
+            gbucket = mapGridBucket(gentry);
+
+            appendBucketEntry(gbucket, x, y, rsize, record);
+
+            this.gridDirectory.putLong((2 + gentry) * LONGBYTES, sx + x);
+            this.gridDirectory.putLong((3 + gentry) * LONGBYTES, sy + y);
+            long temp = this.gridDirectory.getLong((1 + gentry) * LONGBYTES);
+            this.gridDirectory.putLong((1 + gentry) * LONGBYTES, temp + 1);
+            temp = this.gridDirectory.getLong(gentry * LONGBYTES);
+            this.gridDirectory.putLong(gentry * LONGBYTES, temp + 24 + rsize);
+        } catch (Exception e) {
+            //e.printStackTrace();
+            System.out.println("Error: insertGridRecord()");
         }
-
-        appendBucketEntry(gbucket, x, y, rsize, record);
-
-        gentry[2] = sx + x;
-        gentry[3] = sy + y;
-        gentry[1] += 1;
-        gentry[0] += (24 + rsize);
 
         unmapGridBucket(gbucket);
     }
 
-    public int splitGrid(int vertical, long lon, long lat, long x, long y) {
-        int error = 0;
-        long ge = 0; // was pointer
-        long xint = gridScale[1];
-        long yint = gridScale[1 + gridSize];
-        long sum = 0;
-        long average = 0;
-        long nrecords = 0;
-        long xiter = 0;
-        long yiter = 0;
-        long cge = 0;
-        long pge = 0;
+    /*
+        Splits grid in one direction with new grid entries sharing buckets
+     */
+    public void splitGrid(int vertical, long lon, long lat, long x, long y) {
+        try {
+            long ge;
+            long xint = this.gridScale.getLong(1 * LONGBYTES);
+            long yint = this.gridScale.getLong((1 + gridSize) * LONGBYTES);
+            long sum;
+            long average;
+            long nrecords;
+            long xiter;
+            long yiter;
+            long cge = 0;
+            long pge = 0;
 
-        if (vertical != 0 && xint == gridSize - 1) {
-            error = -ENOMEM;
-            //goto clean;
-        }
-
-        if (vertical == 0 && yint == gridSize - 1) {
-            error = -ENOMEM;
-            //goto clean;
-        }
-
-        error = getGridEntry(lon, lat, ge);
-        if (error < 0) {
-            //goto clean;
-        }
-
-        nrecords = ge[1];
-
-        if (vertical == 0) {
-            sum = ge[3];
-            average = (sum + y) / (nrecords + 1);
-
-            error = insertGridPartition(vertical, average);
-            if (error < 0) {
-                //goto clean;
+            if (vertical == 1 && xint == gridSize - 1) {
+                throw new OutOfMemoryError("Out of memory in splitGrid()");
             }
 
-            for (xiter = 0; xiter <= xint; xiter++) {
-                for (yiter = yint + 1; yiter > lat; yiter--) {
-                    error = getGridEntry(xiter, yiter, cge);
-                    if (error < 0) {
-                        //goto clean;
-                    }
+            if (vertical == 0 && yint == gridSize - 1) {
+                throw new OutOfMemoryError("Out of memory in splitGrid()");
+            }
 
-                    error = getGridEntry(xiter, yiter - 1, pge);
-                    if (error < 0) {
-                        //goto clean;
-                    }
+            ge = getGridEntry(lon, lat);
+            nrecords = this.gridDirectory.getLong((ge + 1) * LONGBYTES);
 
-                    //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'memcpy' has no equivalent in Java:
-                    memcpy(cge, pge, 40);
+            if (vertical == 0) {
+                sum = this.gridDirectory.getLong((ge + 3) * LONGBYTES);
+                average = (sum + y) / (nrecords + 1);
+
+                insertGridPartition(vertical, average);
+
+                for (xiter = 0; xiter <= xint; xiter++) {
+                    for (yiter = yint + 1; yiter > lat; yiter--) {
+                        cge = getGridEntry(xiter, yiter);
+                        pge = getGridEntry(xiter, yiter - 1);
+
+                        byte[] temp = new byte[40];
+                        this.gridDirectory.position(pge * LONGBYTES);
+                        this.gridDirectory.get(temp, 0, 40);
+                        this.gridDirectory.position(cge * LONGBYTES);
+                        this.gridDirectory.put(temp, 0, 40); // memcpy
+                    }
+                }
+            } else {
+                sum = this.gridDirectory.getLong((ge + 2) * LONGBYTES);
+                average = (sum + x) / (nrecords + 1);
+
+                insertGridPartition(vertical, average);
+
+                for (yiter = 0; yiter <= yint; yiter++) {
+                    for (xiter = xint + 1; xiter > lon; xiter--) {
+                        cge = getGridEntry(xiter, yiter);
+                        pge = getGridEntry(xiter - 1, yiter);
+
+                        byte[] temp = new byte[40];
+                        this.gridDirectory.position(pge * LONGBYTES);
+                        this.gridDirectory.get(temp, 0, 40);
+                        this.gridDirectory.position(cge * LONGBYTES);
+                        this.gridDirectory.put(temp, 0, 40); // memcpy
+                    }
                 }
             }
-        } else {
-            sum = ge[2];
-            average = (sum + x) / (nrecords + 1);
-
-            error = insertGridPartition(vertical, average);
-            if (error < 0) {
-                //goto clean;
-            }
-
-            for (yiter = 0; yiter <= yint; yiter++) {
-                for (xiter = xint + 1; xiter > lon; xiter--) {
-                    error = getGridEntry(xiter, yiter, cge);
-                    if (error < 0) {
-                        //goto clean;
-                    }
-
-                    error = getGridEntry(xiter - 1, yiter, pge);
-                    if (error < 0) {
-                        //goto clean;
-                    }
-
-                    //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'memcpy' has no equivalent in Java:
-                    memcpy(cge, pge, 40);
-                }
-            }
+        } catch (Exception e) {
+            //e.printStackTrace();
+            System.out.println("Error: splitGrid()");
         }
     }
 
-    public int updateBucket(int direction, long slon, long slat, long dlon, long dlat, long baddr) {
-        int error = 0;
-        int compare = 0;
+    /*
+        Updates destination entry from soure entry if sharing buckets
+     */
+    public void updateBucket(int direction, long slon, long slat, long dlon, long dlat, long baddr) {
+        boolean compare;
         long ge = 0; // was pointer
         long pge = 0; // was pointer
 
-        error = getGridEntry(slon, slat, ge);
-        if (error < 0) {
-            //goto clean;
-        }
+        ge = getGridEntry(slon, slat);
+        pge = getGridEntry(dlon, dlat);
 
-        error = getGridEntry(dlon, dlat, pge);
-        if (error < 0) {
-            //goto clean;
-        }
+        byte[] geTemp = new byte[40];
+        byte[] pgeTemp = new byte[40];
 
-        //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'memcmp' has no equivalent in Java:
-        compare = memcmp(pge, ge, 40);
+        try {
+            this.gridDirectory.position(ge * LONGBYTES);
+            this.gridDirectory.get(geTemp, 0, 40);
+            this.gridDirectory.position(pge * LONGBYTES);
+            this.gridDirectory.get(pgeTemp, 0, 40);
+            compare = geTemp.equals(pgeTemp);
 
-        if (compare != 0 && baddr == pge[4]) {
-            //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'memcpy' has no equivalent in Java:
-            memcpy(pge, ge, 40);
-            error = updatePairedBuckets(direction, dlon, dlat, baddr);
-            if (error < 0) {
-                //goto clean;
+            if (!compare && baddr == this.gridDirectory.getLong((4 + pge) * LONGBYTES)) {
+                this.gridDirectory.position(pge * LONGBYTES);
+                this.gridDirectory.put(geTemp, 0, 40);
+                updatePairedBuckets(direction, dlon, dlat, baddr);
             }
+        } catch (Exception e) {
+            //e.printStackTrace();
+            System.out.println("Error: updateBucket()");
         }
     }
 
-    public int updatePairedBuckets(int direction, long lon, long lat, long baddr)
+    /*
+        Updates paired buckets in given direction with statistics and address
+     */
+    public void updatePairedBuckets(int direction, long lon, long lat, long baddr)
     {
         int error = 0;
-        long xint = gridScale[1];
-        long yint = gridScale[1 + gridSize];
+        long xint;
+        long yint;
+
+        try {
+            xint = this.gridScale.getLong(1 * LONGBYTES);
+            yint = this.gridScale.getLong((1 + gridSize) * LONGBYTES);
+        } catch (Exception e) {
+            //e.printStackTrace();
+            System.out.println("Error: updatePairedBuckets()");
+        }
 
         if (direction >= 0) {
             if (lon < xint) {
-                error = updateBucket(direction, lon, lat, lon + 1, lat, baddr);
-                if (error < 0) {
-                    //goto clean;
-                }
+                updateBucket(direction, lon, lat, lon + 1, lat, baddr);
             }
-
             if (lat < yint) {
-                error = updateBucket(direction, lon, lat, lon, lat + 1, baddr);
-                if (error < 0) {
-                    //goto clean;
-                }
+                updateBucket(direction, lon, lat, lon, lat + 1, baddr);
             }
         }
 
         if (direction <= 0) {
             if (lon > 0) {
-                error = updateBucket(direction, lon, lat, lon - 1, lat, baddr);
-                if (error < 0) {
-                    //goto clean;
-                }
+                updateBucket(direction, lon, lat, lon - 1, lat, baddr);
             }
-
             if (lat > 0) {
-                error = updateBucket(direction, lon, lat, lon, lat - 1, baddr);
-                if (error < 0) {
-                    //goto clean;
-                }
+                updateBucket(direction, lon, lat, lon, lat - 1, baddr);
             }
         }
     }
 
-    public int splitBucket(int vertical, long slon, long slat, long dlon, long dlat) {
-        int error = 0;
-        long sge = 0; // was pointer
-        long dge = 0; // was pointer
-        long sb = 0; // was pointer
-        long db = 0; // was pointer
-        long xint = gridScale[1];
-        long yint = gridScale[1 + gridSize];
-        long avgx = 0;
-        long avgy = 0;
+    /*
+        Divides entries of paired buckets into individual buckets
+     */
+    public void splitBucket(int vertical, long slon, long slat, long dlon, long dlat) {
+        long sge;
+        long dge;
+        MappedByteBuffer sb;
+        MappedByteBuffer db;
+        long xint = this.gridScale.getLong(1 * LONGBYTES);
+        long yint = this.gridScale.getLong((1 + this.gridSize) * LONGBYTES);
+        long avgx;
+        long avgy;
         long iter = 0;
-        long cbe = 0; // was pointer
-        long ssx = 0;
-        long ssy = 0;
-        long dsx = 0;
-        long dsy = 0;
-        long sn = 0;
-        long dn = 0;
-        long sbytes = 0;
-        long dbytes = 0;
+        long cbe;
+        long ssx;
+        long ssy;
+        long dsx;
+        long dsy;
+        long sn;
+        long dn;
+        long sbytes;
+        long dbytes;
 
         if (slon > xint || slat > yint || dlon > xint || dlat > yint) {
-            error = -EINVAL;
-            //goto clean;
+            throw new IllegalArgumentException("Invalid argument in splitBucket()");
         }
 
-        error = getGridEntry(slon, slat, sge);
-        if (error < 0) {
-            //goto clean;
+        sge = getGridEntry(slon, slat);
+        dge = getGridEntry(dlon, dlat);
+
+        this.gridDirectory.putLong(dge * LONGBYTES, 0);
+        this.gridDirectory.putLong((1 + dge) * LONGBYTES, 0);
+        this.gridDirectory.putLong((2 + dge) * LONGBYTES, 0);
+        this.gridDirectory.putLong((3 + dge) * LONGBYTES, 0);
+
+        long temp = this.gridDirectory.getLong(0);
+        this.gridDirectory.putLong((4 + dge) * LONGBYTES, temp);
+        this.gridDirectory.putLong(0, temp + 1);
+
+        long[] xy = getGridPartitions(dlon, dlat);
+        avgx = xy[0];
+        avgy = xy[1];
+
+        sb = mapGridBucket(sge);
+        try {
+            db = mapGridBucket(dge);
+        } catch (Exception e) {
+            unmapGridBucket(sge); // ????????????????????????????????
         }
 
-        error = getGridEntry(dlon, dlat, dge);
-        if (error < 0) {
-            //goto clean;
-        }
+        sbytes = this.gridDirectory.getLong(sge * LONGBYTES);
+        sn = this.gridDirectory.getLong((1 + sge) * LONGBYTES);
+        ssx = this.gridDirectory.getLong((2 + sge) * LONGBYTES);
+        ssy = this.gridDirectory.getLong((3 + sge) * LONGBYTES);
 
-        dge[0] = 0;
-        dge[1] = 0;
-        dge[2] = 0;
-        dge[3] = 0;
-        dge[4] = gridDirectory[0];
-        gridDirectory[0] += 1;
+        dbytes = this.gridDirectory.getLong(dge * LONGBYTES);
+        dn = this.gridDirectory.getLong((1 + dge) * LONGBYTES);
+        dsx = this.gridDirectory.getLong((2 + dge) * LONGBYTES);
+        dsy = this.gridDirectory.getLong((3 + dge) * LONGBYTES);
 
-        error = getGridPartitions(avgx, avgy, dlon, dlat);
-        if (error < 0) {
-            //goto clean;
-        }
+        try {
+            if (vertical == 1) {
+                while (iter < sn) {
+                    cbe = getBucketEntry(sb, iter);
 
-        error = mapGridBucket(sge, sb);
-        if (error < 0) {
-            //goto clean;
-        }
+                    if (sb.getLong(cbe * LONGBYTES) > avgx) {
+                        long zero = this.gridDirectory.getLong(cbe * LONGBYTES);
+                        long one = this.gridDirectory.getLong((1 + cbe) * LONGBYTES);
+                        long two = this.gridDirectory.getLong((2 + cbe) * LONGBYTES);
+                        appendBucketEntry(db, zero, one, two, cbe + 3); // how to pass in a record?
 
-        error = mapGridBucket(dge, db);
-        if (error < 0) {
-            unmapGridBucket(sge);
-            //goto clean;
-        }
+                        sbytes -= (24 + two);
+                        dbytes += (24 + two);
+                        sn -= 1;
+                        dn += 1;
+                        ssx -= zero;
+                        ssy -= one;
+                        dsx += zero;
+                        dsy += one;
 
-        sbytes = sge[0];
-        sn = sge[1];
-        ssx = sge[2];
-        ssy = sge[3];
-
-        dbytes = dge[0];
-        dn = dge[1];
-        dsx = dge[2];
-        dsy = dge[3];
-
-        if (vertical != 0) {
-            while (iter < sn) {
-                error = getBucketEntry(cbe, sb, iter);
-                if (error < 0) {
-                    //goto pclean;
-                }
-
-                if (cbe[0] > avgx) {
-                    appendBucketEntry(db, cbe[0], cbe[1], cbe[2], cbe + 3);
-
-                    sbytes -= (24 + cbe[2]);
-                    dbytes += (24 + cbe[2]);
-                    sn -= 1;
-                    dn += 1;
-                    ssx -= cbe[0];
-                    ssy -= cbe[1];
-                    dsx += cbe[0];
-                    dsy += cbe[1];
-
-                    error = deleteBucketEntry(sb, iter);
-                    if (error < 0) {
-                        //goto pclean;
+                        deleteBucketEntry(sb, iter);
+                    } else {
+                        iter++;
                     }
-                } else {
-                    iter++;
+                }
+            } else {
+                while (iter < sn) {
+                    cbe = getBucketEntry(sb, iter);
+
+                    if (sb.getLong((1 + cbe) * LONGBYTES) > avgy) {
+                        long zero = this.gridDirectory.getLong(cbe * LONGBYTES);
+                        long one = this.gridDirectory.getLong((1 + cbe) * LONGBYTES);
+                        long two = this.gridDirectory.getLong((2 + cbe) * LONGBYTES);
+                        appendBucketEntry(db, zero, one, two, cbe + 3); // how to pass in a record?
+
+                        sbytes -= (24 + two);
+                        dbytes += (24 + two);
+                        sn -= 1;
+                        dn += 1;
+                        ssx -= zero;
+                        ssy -= one;
+                        dsx += zero;
+                        dsy += one;
+
+                        deleteBucketEntry(sb, iter);
+                    } else {
+                        iter++;
+                    }
                 }
             }
-        } else {
-            while (iter < sn) {
-                error = getBucketEntry(cbe, sb, iter);
-                if (error < 0) {
-                    //goto pclean;
-                }
-
-                if (cbe[1] > avgy) {
-                    appendBucketEntry(db, cbe[0], cbe[1], cbe[2], cbe + 3);
-
-                    sbytes -= (24 + cbe[2]);
-                    dbytes += (24 + cbe[2]);
-                    sn -= 1;
-                    dn += 1;
-                    ssx -= cbe[0];
-                    ssy -= cbe[1];
-                    dsx += cbe[0];
-                    dsy += cbe[1];
-
-                    error = deleteBucketEntry(sb, iter);
-                    if (error < 0) {
-                        //C++ TO JAVA CONVERTER TODO TASK: There are no gotos or labels in Java:
-                        //goto pclean;
-                    }
-                } else {
-                    iter++;
-                }
-            }
+        } catch (Exception e) {
+            unmapGridBucket(sb);
+            unmapGridBucket(db);
+            System.out.println("Error: splitBucket(), Unmapped sb and db");
         }
 
-        sge[0] = sbytes;
-        sge[1] = sn;
-        sge[2] = ssx;
-        sge[3] = ssy;
+        this.gridDirectory.putLong(sge * LONGBYTES, sbytes);
+        this.gridDirectory.putLong((1 + sge) * LONGBYTES, sn);
+        this.gridDirectory.putLong((2 + sge) * LONGBYTES, ssx);
+        this.gridDirectory.putLong((3 + sge) * LONGBYTES, ssy);
 
-        dge[0] = dbytes;
-        dge[1] = dn;
-        dge[2] = dsx;
-        dge[3] = dsy;
+        this.gridDirectory.putLong(dge * LONGBYTES, dbytes);
+        this.gridDirectory.putLong((1 + dge) * LONGBYTES, dn);
+        this.gridDirectory.putLong((2 + dge) * LONGBYTES, dsx);
+        this.gridDirectory.putLong((3 + dge) * LONGBYTES, dsy);
 
-        error = updatePairedBuckets(1, dlon, dlat, sge[4]);
-        if (error < 0) {
-            //C++ TO JAVA CONVERTER TODO TASK: There are no gotos or labels in Java:
-            //goto pclean;
-        }
-
-        error = updatePairedBuckets(0, slon, slat, sge[4]);
-
-        //pclean:
-        //unmapGridBucket(sb);
-        //unmapGridBucket(db);
-    }
-
-    public int checkPairedBucket(tangible.RefObject<Integer> isPaired, long slon, long slat, long dlon, long dlat) {
-        int error = 0;
-        long ge = 0; // was pointer
-        long pge = 0; // was pointer
-
-        error = getGridEntry(slon, slat, ge);
-        if (error < 0) {
-            //goto clean;
-        }
-
-        error = getGridEntry(dlon, dlat, pge);
-        if (error < 0) {
-            //goto clean;
-        }
-
-        if (ge[4] == pge[4]) {
-            isPaired.argValue = 1;
+        try {
+            long four = this.gridDirectory.getLong((4 + sge) * LONGBYTES);
+            updatePairedBuckets(1, dlon, dlat, four);
+            updatePairedBuckets(0, slon, slat, four);
+        } catch (Exception e) {
+            unmapGridBucket(sb);
+            unmapGridBucket(db);
+            System.out.println("Error: splitBucket(), Unmapped sb and db");
         }
     }
 
-    public int hasPairedBucket(int direction, tangible.RefObject<Integer> isPaired, tangible.RefObject<Integer> vertical, tangible.RefObject<Integer> forward, long lon, long lat) {
-        int error = 0;
-        isPaired.argValue = null;
-        vertical.argValue = null;
-        forward.argValue = null;
-        long xint = gridScale[1];
-        long yint = gridScale[1 + gridSize];
+    /*
+        Checks if entries share buckets
+     */
+    public boolean checkPairedBucket(long slon, long slat, long dlon, long dlat) {
+        long ge;
+        long pge;
+
+        ge = getGridEntry(slon, slat);
+        pge = getGridEntry(dlon, dlat);
+
+        if (this.gridDirectory.getLong((4 + ge) * LONGBYTES) ==
+                this.gridDirectory.getLong(4 + pge) * LONGBYTES) {
+            return true;
+        }
+    }
+
+    /*
+        Checks if paired bucket for given bucket exists
+        Returns boolean array [isPaired, vertical, forward]
+     */
+    public boolean[] hasPairedBucket(int direction, long lon, long lat) {
+        long xint = this.gridScale.getLong(1 * LONGBYTES);
+        long yint = this.gridScale.getLong((1 + gridSize) * LONGBYTES);
+        boolean[] ret = new boolean[3];
 
         if (direction <= 0) {
             if (lon > 0) {
-                error = checkPairedBucket(isPaired.argValue, lon, lat, lon - 1, lat);
-                if (error < 0) {
-                    //goto clean;
-                }
-
-                if (isPaired.argValue) {
-                    vertical.argValue = 1;
-                    //goto clean;
+                if (checkPairedBucket(lon, lat, lon - 1, lat)) {
+                    ret[0] = true;
+                    ret[1] = true;
+                    return ret;
                 }
             }
-
             if (lat > 0) {
-                error = checkPairedBucket(isPaired.argValue, lon, lat, lon, lat - 1);
-                if (error < 0) {
-                    //goto clean;
-                }
-
-                if (isPaired.argValue) {
-                    //goto clean;
+                if (checkPairedBucket(lon, lat, lon, lat - 1)) {
+                    ret[0] = true;
+                    return ret;
                 }
             }
         }
 
         if (direction >= 0) {
-            forward.argValue = 1;
+            ret[2] = true;
             if (lon < xint) {
-                error = checkPairedBucket(isPaired.argValue, lon, lat, lon + 1, lat);
-                if (error < 0) {
-                    //goto clean;
-                }
-
-                if (isPaired.argValue) {
-                    vertical.argValue = 1;
-                    //goto clean;
+                if (checkPairedBucket(lon, lat, lon + 1, lat)) {
+                    ret[0] = true;
+                    ret[1] = true;
+                    return ret;
                 }
             }
-
             if (lat < yint) {
-                error = checkPairedBucket(isPaired.argValue, lon, lat, lon, lat + 1);
-                if (error < 0) {
-                    //goto clean;
-                }
-
-                if (isPaired.argValue) {
-                    //goto clean;
+                if (checkPairedBucket( lon, lat, lon, lat + 1)) {
+                    ret[0] = true;
+                    return ret;
                 }
             }
         }
     }
 
-    public int insertRecord(long x, long y, Object record, long rsize) {
-        int error = 0;
-        long lon = 0;
-        long lat = 0;
-        long ge = 0; // was pointer
-        long nbytes = 0;
-        long nrecords = 0;
-        long capacity = 0;
+    /*
+        Inserts new record in the grid
+     */
+    public void insertRecord(long x, long y, Object record, long rsize) {
+        long ge; // was pointer
+        long nbytes;
+        long nrecords;
+        long capacity;
         long esize = 24 + rsize;
-        int isPaired = -1;
-        int vertical = -1;
-        int forward = -1;
+        boolean isPaired;
+        boolean vertical;
+        boolean forward;
         int split;
-        long xint = gridScale[1];
-        long yint = gridScale[1 + gridSize];
+        long xint = this.gridScale.getLong(1 * LONGBYTES);
+        long yint = this.gridScale((1 + gridSize) * LONGBYTES);
         split = xint == yint != 0 ? 1 : 0;
 
-        getGridLocation(lon, lat, x, y);
+        long[] lonlat = getGridLocation(x, y);
 
-        error = getGridEntry(lon, lat, ge);
-        if (error < 0) {
-            //goto clean;
-        }
+        ge = getGridEntry(lonlat[0], lonlat[1]);
 
-        nbytes = ge[0];
-        nrecords = ge[1];
+        nbytes = this.gridDirectory.getLong(ge * LONGBYTES);
+        nrecords = this.gridDirectory.getLong((1 + ge) * LONGBYTES);
         capacity = this.pageSize - 16 - nbytes;
 
         if (esize <= capacity) {
-            error = insertGridRecord(ge, x, y, record, rsize);
-            if (error < 0) {
-                //goto clean;
-            }
-
-            error = updatePairedBuckets(0, lon, lat, ge[4]);
-            if (error < 0) {
-                //goto clean;
-            }
+            insertGridRecord(ge, x, y, record, rsize);
+            updatePairedBuckets(0, lon, lat, ge[4]);
         } else {
-            error = hasPairedBucket(0, isPaired, vertical, forward, lon, lat);
-            if (error < 0) {
-                //goto clean;
-            }
+            boolean temp[] = hasPairedBucket(0, isPaired, vertical, forward, lon, lat);
+            isPaired = temp[0];
+            vertical = temp[1];
+            forward = temp[2];
 
-            if (isPaired != 0) {
-                if (vertical != 0) {
-                    if (forward != 0) {
-                        error = splitBucket(vertical, lon, lat, lon + 1, lat);
+            if (isPaired) {
+                if (vertical) {
+                    if (forward) {
+                        splitBucket(vertical, lon, lat, lon + 1, lat);
                     } else {
-                        error = splitBucket(vertical, lon - 1, lat, lon, lat);
+                        splitBucket(vertical, lon - 1, lat, lon, lat);
                     }
                 }else {
                     if (forward != 0) {
-                        error = splitBucket(vertical, lon, lat, lon, lat + 1);
+                        splitBucket(vertical, lon, lat, lon, lat + 1);
                     } else {
-                        error = splitBucket(vertical, lon, lat - 1, lon, lat);
+                        splitBucket(vertical, lon, lat - 1, lon, lat);
                     }
                 }
-
-                if (error < 0) {
-                    //goto clean;
-                }
             } else {
-                error = splitGrid(split, lon, lat, x, y);
-                if (error < 0) {
-                    //goto clean;
+                splitGrid(split, lon, lat, x, y);
+            }
+
+            insertRecord(x, y, record, rsize);
+        }
+    }
+
+    /*
+        Returns record for given coordinates
+     */
+    public Object findRecord(long x, long y) {
+        int found = 0;
+        long lon;
+        long lat;
+        long ge;
+        MappedByteBuffer gb = 0;
+        long nrecords;
+        long iter = 0;
+        long be;
+        long bex;
+        long bey;
+        long rsize;
+
+        long[] lonlat = getGridLocation(x, y);
+        lon = lonlat[0];
+        lat = lonlat[1];
+
+        try {
+            ge = getGridEntry(lon, lat);
+            gb = mapGridBucket(ge);
+        } catch (Exception e) {
+            //e.printStackTrace();
+            throw new IllegalArgumentException("Invalid argument in findRecord()");
+        }
+
+        try {
+            nrecords = gb.getLong(1 * LONGBYTES);
+
+            for (iter = 0; iter < nrecords; iter++) {
+                be = getBucketEntry(gb, iter);
+
+                bex = gb.getLong(be * LONGBYTES);
+                bey = gb.getLong((1 + be) * LONGBYTES);
+                rsize = gb.getLong((2 + be) * LONGBYTES);
+
+                byte[] record = new byte[rsize];
+
+                if (bex == x && bey == y) {
+                    found = 1;
+                    gb.position((be + 3) * LONGBYTES);
+                    gb.get(record, 0, rsize);
+                    break;
                 }
             }
-
-            error = insertRecord(x, y, record, rsize);
-        }
-    }
-
-    public int findRecord(long x, long y, Object[] record) {
-        int error = 0;
-        int found = 0;
-        long lon = 0;
-        long lat = 0;
-        long ge = 0; // was pointer
-        long gb = 0; // was pointer
-        long nrecords = 0;
-        long iter = 0;
-        long be = 0; // was pointer
-        long bex = 0;
-        long bey = 0;
-        long rsize = 0;
-
-        //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'malloc' has no equivalent in Java:
-        record[0] = (Object)malloc(this.pageSize);
-        if (record[0] == null) {
-            error = -ENOMEM;
-            //goto clean;
-        }
-
-        getGridLocation(lon, lat, x, y);
-
-        error = getGridEntry(lon, lat, ge);
-        if (error < 0) {
-            //goto clean;
-        }
-
-        error = mapGridBucket(ge, gb);
-        if (error < 0) {
-            //goto clean;
-        }
-
-        nrecords = gb[1];
-
-        for (iter = 0; iter < nrecords; iter++) {
-            error = getBucketEntry(be, gb, iter);
-            if (error < 0) {
-                //goto pclean;
-            }
-
-            bex = be[0];
-            bey = be[1];
-            rsize = be[2];
-
-            if (bex == x && bey == y) {
-                found = 1;
-                //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'memcpy' has no equivalent in Java:
-                memcpy(record[0], be + 3, rsize);
-                break;
-            }
-        }
-        /*
-        pclean:
+        } catch (Exception e) {
+            //e.printStackTrace();
             unmapGridBucket(gb);
-
-        clean:
-            if (found == 0) {
-                error = -EINVAL;
-            }
-            return error;
-        */
-    }
-
-    public int deleteRecord(long x, long y) {
-        int error = 0;
-        int found = 0;
-        long lon = 0;
-        long lat = 0;
-        long ge = 0; // was pointer
-        long sx = 0;
-        long sy = 0;
-        long gb = 0; // was pointer
-        long nrecords = 0;
-        long iter = 0;
-        long be = 0; // was pointer
-        long bex = 0;
-        long bey = 0;
-        long rsize = 0;
-
-        getGridLocation(lon, lat, x, y);
-
-        error = getGridEntry(lon, lat, ge);
-        if (error < 0) {
-            //goto clean;
+            System.out.println("Error: findRecord()");
         }
 
-        sx = ge[2];
-        sy = ge[3];
+        unmapGridBucket(gb);
+        if (found == 0) {
+            throw new IllegalArgumentException("Invalid argument in findRecord()");
+        }
 
-        error = mapGridBucket(ge, gb);
-        if (error < 0) {
-            //goto clean;
+        ByteArrayInputStream in = new ByteArrayInputStream(record);
+        ObjectInputStream is = new ObjectInputStream(in);
+        return is.readObject();
+    }
+
+    /*
+        Deletes record for given coordinates
+     */
+    public void deleteRecord(long x, long y) {
+        int found = 0;
+        long lon;
+        long lat;
+        long ge;
+        long sx;
+        long sy;
+        MappedByteBuffer gb;
+        long nrecords;
+        long iter = 0;
+        long be;
+        long bex;
+        long bey;
+        long rsize;
+
+        long[] lonlat = getGridLocation(x, y);
+        lon = lonlat[0];
+        lat = lonlat[1];
+
+        try {
+            ge = getGridEntry(lon, lat);
+
+            sx = this.gridDirectory.getLong((2 + ge) * LONGBYTES);
+            sy = this.gridDirectory.getLong((3 + ge) * LONGBYTES);
+
+            gb = mapGridBucket(ge);
+        } catch (Exception e) {
+            throw new IllegalArgumentException("Invalid argument in deleteRecord()");
         }
 
         nrecords = gb[1];
 
-        for (iter = 0; iter < nrecords; iter++) {
-            error = getBucketEntry(be, gb, iter);
-            if (error < 0) {
-                //goto pclean;
-            }
+        try {
+            for (iter = 0; iter < nrecords; iter++) {
+                be = getBucketEntry(gb, iter);
 
-            bex = be[0];
-            bey = be[1];
-            rsize = be[2];
+                bex = gb.getLong(be * LONGBYTES);
+                bey = gb.getLong((1 + be) * LONGBYTES);
+                rsize = gb.getLong((2 + be) * LONGBYTES);
 
-            if (bex == x && bey == y) {
-                found = 1;
-                error = deleteBucketEntry(gb, iter);
-                ge[0] -= (24 + rsize);
-                ge[1] -= 1;
-                ge[2] = sx - bex;
-                ge[3] = sy - bey;
-                break;
+                if (bex == x && bey == y) {
+                    found = 1;
+                    deleteBucketEntry(gb, iter);
+                    long temp = this.gridDirectory.getLong(ge * LONGBYTES);
+                    this.gridDirectory.putLong(ge * LONGBYTES, temp - (24 + rsize));
+                    temp = this.gridDirectory.getLong((1 + ge) * LONGBYTES);
+                    this.gridDirectory.putLong((1 + ge) * LONGBYTES, temp - 1);
+                    temp = this.gridDirectory.getLong((2 + ge) * LONGBYTES);
+                    this.gridDirectory.putLong((2 + ge) * LONGBYTES, sx - bex);
+                    temp = this.gridDirectory.getLong((3 + ge) * LONGBYTES);
+                    this.gridDirectory.putLong((3 + ge) * LONGBYTES, sy - bey);
+                    break;
+                }
             }
+        } catch (Exception e) {
+            System.out.println("Error: deleteRecord()");
+            unmapGridBucket(gb);
         }
 
         if (found != 0) {
-            error = updatePairedBuckets(0, lon, lat, ge[4]);
+            long temp = this.gridDirectory.getLong((4 + ge) * LONGBYTES);
+            updatePairedBuckets(0, lon, lat, temp);
         }
-        /*
-        pclean:
-            unmapGridBucket(gb);
+        unmapGridBucket(gb);
 
-        clean:
-            if (found == 0) {
-                error = -EINVAL;
-            }
-
-            return error;
-        */
+        if (found == 0) {
+            throw new IllegalArgumentException("Invalid argument in deleteRecord()");
+        }
     }
 
-    public int findRangeRecords(long x1, long y1, long x2, long y2, long dsize/*waspointer*/, Object[] records) {
-        int error = 0;
-        long lon1 = 0;
-        long lat1 = 0;
-        long lon2 = 0;
-        long lat2 = 0;
+    /*
+        Retrieves record within specified coordinate range
+     */
+    public byte[] findRangeRecords(long x1, long y1, long x2, long y2, long dsize) {
+        long lon1;
+        long lat1;
+        long lon2;
+        long lat2;
         long iter = 0;
         long xiter = 0;
         long yiter = 0;
-        long ge = 0; // was pointer
-        long gb = 0; // was pointer
-        long be = 0; // was pointer
-        long nrecords = 0;
-        long nr = 0;
-        long bx = 0;
-        long by = 0;
-        long bs = 0;
-        long rsize = 0;
-        String rrecords = null;
-        int isPaired = 0;
-        int vertical = -1;
-        int forward = -1;
+        long ge;
+        MappedByteBuffer gb;
+        long be;
+        long nrecords;
+        long nr;
+        long bx;
+        long by;
+        long bs;
+        long rsize;
+        long rrecords = 8;
+        boolean isPaired;
+        boolean vertical;
+        boolean forward;
+        byte[] records;
 
-        getGridLocation(lon1, lat1, x1, y1);
-        getGridLocation(lon2, lat2, x2, y2);
+        long[] lonlat1 = getGridLocation(x1, y1);
+        lon1 = lonlat1[0];
+        lat1 = lonlat1[1];
+        long[] lonlat2 = getGridLocation(x2, y2);
+        lon2 = lonlat2[0];
+        lat2 = lonlat2[1];
 
+        //save
         rsize = (lon2 - lon1 + 1) * (lat2 - lat1 + 1) * this.pageSize;
-        //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'malloc' has no equivalent in Java:
-        records[0] = (Object)malloc(rsize);
-        if (records[0] == null) {
-            error = -ENOMEM;
-            //goto clean;
-        }
+        records = new byte[rsize];
 
-        rrecords = (String)records + 8;
+        try {
+            for (xiter = lon1; xiter <= lon2; xiter++) {
+                for (yiter = lat1; yiter <= lat2; yiter++) {
+                    ge = getGridEntry(xiter, yiter);
+                    boolean[] temp = hasPairedBucket(-1, isPaired, vertical, forward, xiter, yiter);
+                    isPaired = temp[0];
+                    vertical = temp[1];
+                    forward = temp[2];
 
-        for (xiter = lon1; xiter <= lon2; xiter++) {
-            for (yiter = lat1; yiter <= lat2; yiter++) {
-                error = getGridEntry(xiter, yiter, ge);
-                if (error < 0) {
-                    //goto clean;
-                }
-
-                error = hasPairedBucket(-1, isPaired, vertical, forward, xiter, yiter);
-                if (error < 0) {
-                    //goto clean;
-                }
-
-                if (isPaired != 0 && !((xiter == lon1 && vertical != 0) || (yiter == lat1 && vertical == 0))) {
-                    continue;
-                }
-
-                error = mapGridBucket(ge, gb);
-                if (error < 0) {
-                    //goto clean;
-                }
-
-                nrecords = gb[1];
-
-                for (iter = 0; iter < nrecords; iter++) {
-                    error = getBucketEntry(be, gb, iter);
-                    if (error < 0) {
-                        unmapGridBucket(gb);
-                        //goto clean;
+                    if (isPaired != 0 && !((xiter == lon1 && vertical != 0) || (yiter == lat1 && vertical == 0))) {
+                        continue;
                     }
 
-                    bx = be[0];
-                    by = be[1];
-                    bs = be[2];
+                    gb = mapGridBucket(ge);
+                    nrecords = gb.getLong(1 * LONGBYTES);
 
-                    if (bx >= x1 != 0 && bx <= x2 != 0 && by >= y1 != 0 && by <= y2) {
-                        nr += 1;
-                        //C++ TO JAVA CONVERTER TODO TASK: The memory management function 'memcpy' has no equivalent in Java:
-                        memcpy(rrecords, be, 24 + bs);
-                        rrecords += (24 + bs);
-                        dsize += (24 + bs); // was pointer
+                    for (iter = 0; iter < nrecords; iter++) {
+                        be = getBucketEntry(gb, iter);
+                        if (error < 0) {
+                            unmapGridBucket(gb);
+                        }
+
+                        bx = this.gridDirectory.getLong(be * LONGBYTES);
+                        by = this.gridDirectory.getLong((1 + be) * LONGBYTES);
+                        bs = this.gridDirectory.getLong((2 + be) * LONGBYTES);
+
+                        if (bx >= x1 != 0 && bx <= x2 != 0 && by >= y1 != 0 && by <= y2) {
+                            nr += 1;
+                            this.gridDirectory.position(be);
+                            this.gridDirectory.get(records, rrecords, 24 + bs);
+                            rrecords += (24 + bs);
+                            dsize += (24 + bs);
+                        }
                     }
+                    unmapGridBucket(gb);
                 }
-
-                unmapGridBucket(gb);
             }
+        } catch (Exception e) {
+            //e.printStackTrace();
+            System.out.println("Error; getRangeRecords()");
         }
 
-        ((long) records[0])[0] = nr;
+        records.putLong(0, nr);
+        return records;
     }
 }
